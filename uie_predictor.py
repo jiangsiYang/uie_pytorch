@@ -417,11 +417,18 @@ class UIEPredictor(object):
         # max predict length should exclude the length of prompt and summary tokens
         max_predict_len = self._max_seq_len - len(max(prompts)) - 3
 
-        short_input_texts, self.input_mapping = self._auto_splitter(
+        # NOTE: `input_mapping` used to be stored on `self`, which caused
+        # race conditions when the predictor instance was shared across
+        # concurrent requests.  Each call would overwrite `self.input_mapping`
+        # and could corrupt another call that was still using the previous
+        # value, leading to mismatched result sizes and `IndexError`s during
+        # post-processing.  To make the predictor thread-safe we keep the
+        # mapping local to this method instead of storing it on the object.
+        short_input_texts, input_mapping = self._auto_splitter(
             input_texts, max_predict_len, split_sentence=self._split_sentence)
 
         short_texts_prompts = []
-        for k, v in self.input_mapping.items():
+        for k, v in input_mapping.items():
             short_texts_prompts.extend([prompts[k] for i in range(len(v))])
         short_inputs = [{
             "text": short_input_texts[i],
@@ -510,7 +517,7 @@ class UIEPredictor(object):
         results = self._convert_ids_to_results(short_inputs, sentence_ids,
                                                probs)
         results = self._auto_joiner(results, short_input_texts,
-                                    self.input_mapping)
+                                    input_mapping)
         return results
 
     def _auto_joiner(self, short_results, short_inputs, input_mapping):
